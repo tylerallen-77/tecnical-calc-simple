@@ -11,36 +11,38 @@ def home():
 @app.route('/calculate', methods=['POST'])
 def calculate():
     try:
-        # Menerima data dari Make.com
-        # Kita harapkan format: { "ohlcv_data": [[time, o, h, l, c, v], ...] }
         content = request.json
-        raw_data = content.get('ohlcv_data', [])
+        
+        # --- LOGIKA BARU: DETEKSI FORMAT OTOMATIS ---
+        raw_data = []
+        
+        # Kasus A: Jika data dikirim rapi dengan kunci 'ohlcv_data'
+        if 'ohlcv_data' in content:
+            raw_data = content['ohlcv_data']
+            
+        # Kasus B: Jika data dikirim MENTAH (Raw) langsung dari GeckoTerminal
+        # Struktur: { "data": { "attributes": { "ohlcv_list": [...] } } }
+        elif 'data' in content and 'attributes' in content['data']:
+            raw_data = content['data']['attributes']['ohlcv_list']
+            
+        else:
+            return jsonify({"error": "Format JSON tidak dikenali. Pastikan data GeckoTerminal masuk."}), 400
 
+        # --- LANJUT KE PERHITUNGAN BIASA ---
         if not raw_data:
-            return jsonify({"error": "No data provided"}), 400
+             return jsonify({"error": "Data kosong"}), 400
 
-        # GeckoTerminal memberikan format: [Timestamp, Open, High, Low, Close, Volume]
-        # Kita ubah menjadi DataFrame (Tabel)
         df = pd.DataFrame(raw_data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        
-        # Pastikan data diurutkan dari terlama ke terbaru
         df = df.sort_values('timestamp', ascending=True)
-        
-        # Konversi ke angka float (untuk keamanan)
         df['close'] = df['close'].astype(float)
 
-        # --- PERHITUNGAN INDIKATOR ---
-        # 1. RSI (14)
+        # Hitung Indikator
         df['RSI'] = df.ta.rsi(close='close', length=14)
-        
-        # 2. EMA (20 & 200)
         df['EMA_20'] = df.ta.ema(close='close', length=20)
         df['EMA_200'] = df.ta.ema(close='close', length=200)
 
-        # Ambil baris data terakhir (Candle terbaru/closed)
         last_row = df.iloc[-1]
-
-        # Tentukan Sinyal Sederhana untuk membantu Gemini
+        
         trend = "UPTREND" if last_row['close'] > last_row['EMA_200'] else "DOWNTREND"
         momentum = "OVERSOLD" if last_row['RSI'] < 30 else ("OVERBOUGHT" if last_row['RSI'] > 70 else "NEUTRAL")
 
